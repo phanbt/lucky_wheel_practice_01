@@ -213,6 +213,7 @@ footer{font-size:.82rem;color:var(--muted);text-align:left;padding-top:6px}
         <textarea id="namesInput" spellcheck="false" autocomplete="off"></textarea>
         <div class="setup-row">
           <span id="nameCount" class="count">0 names</span>
+          <button id="dedupeBtn" class="btn ghost" type="button" hidden>Remove repeated names</button>
           <button id="clearBtn" class="btn ghost" type="button">Clear</button>
           <button id="loadBtn" class="btn primary" type="button">Load the wheel</button>
         </div>
@@ -304,12 +305,41 @@ footer{font-size:.82rem;color:var(--muted);text-align:left;padding-top:6px}
   const saved = store.get("lw-names");
   input.value = saved !== null ? saved : SAMPLE.join("\n");
   sampleNote.hidden = saved !== null;
-  function updateCount(){ nameCount.textContent = plural(parseNames(input.value).length, "name"); }
-  input.addEventListener("input", () => { updateCount(); setupMsg.textContent = ""; sampleNote.hidden = true; store.set("lw-names", input.value); });
+  // Two entries count as the same name when they match ignoring upper/lower case and extra spaces.
+  const keyOf = s => s.normalize("NFC").replace(/\s+/g, " ").trim().toLocaleLowerCase();
+  function findDuplicates(names){
+    const seen = new Map();
+    names.forEach(n => { const k = keyOf(n); const e = seen.get(k); if (e) e.count++; else seen.set(k, {name:n, count:1}); });
+    return [...seen.values()].filter(e => e.count > 1);
+  }
+  function updateCount(){
+    const names = parseNames(input.value), dups = findDuplicates(names);
+    const extra = dups.reduce((s, d) => s + d.count - 1, 0);
+    nameCount.textContent = plural(names.length, "name") + (extra ? " · " + extra + " repeated" : "");
+    $("dedupeBtn").hidden = dups.length === 0;
+    return dups;
+  }
+  function duplicateMessage(dups){
+    return "These names appear more than once: " + dups.map(d => d.name + " (" + d.count + "×)").join(", ") +
+      ". Remove the repeats, or make each name different, for example \u201cMinh A\u201d and \u201cMinh B\u201d.";
+  }
+  input.addEventListener("input", () => {
+    const dups = updateCount();
+    if (!dups.length || setupMsg.textContent) setupMsg.textContent = dups.length && setupMsg.textContent ? duplicateMessage(dups) : "";
+    sampleNote.hidden = true; store.set("lw-names", input.value);
+  });
+  $("dedupeBtn").onclick = () => {
+    const seen = new Set(), kept = [];
+    parseNames(input.value).forEach(n => { const k = keyOf(n); if (!seen.has(k)){ seen.add(k); kept.push(n.replace(/\s+/g, " ")); } });
+    input.value = kept.join("\n"); store.set("lw-names", input.value);
+    updateCount(); setupMsg.textContent = ""; input.focus();
+  };
   updateCount();
   $("clearBtn").onclick = () => { input.value = ""; sampleNote.hidden = true; store.set("lw-names",""); updateCount(); input.focus(); };
   $("loadBtn").onclick = () => {
     const names = parseNames(input.value);
+    const dups = findDuplicates(names);
+    if (dups.length){ setupMsg.textContent = duplicateMessage(dups); input.focus(); return; }
     if (names.length < 2){ setupMsg.textContent = "Add at least 2 names to start the draw."; input.focus(); return; }
     store.set("lw-names", input.value);
     pool = names.slice(); winners = []; rotation = rand() * TAU; pending = -1;
